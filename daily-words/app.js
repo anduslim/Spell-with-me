@@ -238,6 +238,13 @@ function wordInfo(parts) {
   if (el.querySelector(".hanzi")) el.querySelector(".hanzi").textContent = x.zh;
   if (el.querySelector(".pinyin")) el.querySelector(".pinyin").textContent = x.py;
   if (el.querySelector(".meaning")) el.querySelector(".meaning").textContent = "“" + x.en + "”";
+  if (parts.includes("sentence") && x.s) {
+    el.insertAdjacentHTML("beforeend",
+      `<span class="sentence"><span class="s-zh" lang="zh-CN"></span><span class="s-py"></span><span class="s-en"></span></span>`);
+    el.querySelector(".s-zh").textContent = x.s;
+    el.querySelector(".s-py").textContent = x.sp;
+    el.querySelector(".s-en").textContent = x.se;
+  }
 }
 
 // What tapping the picture (or Space) says, depending on the step
@@ -248,7 +255,8 @@ function sayWord() {
   if (!isZh()) return say([[x.w], [x.s], [x.w]]);
   if (game.phase === "quiz") return say([["Find", "en"], [x.zh, "zh"]]);
   if (game.phase === "build") return say([[x.zh, "zh"], [x.en, "en"]]);
-  say([[x.zh, "zh"], [x.en, "en"], [x.zh, "zh"]]);
+  // Learn: the word, its meaning, an example sentence, then the word again (like English mode)
+  say([[x.zh, "zh"], [x.en, "en"]].concat(x.s ? [[x.s, "zh"]] : [], [[x.zh, "zh"]]));
 }
 
 // English: spell with letter tiles
@@ -315,7 +323,7 @@ function zhLearn() {
   const x = cur();
   game.phase = "learn";
   showPicture(x.pic);
-  wordInfo(["hanzi", "pinyin", "meaning"]);
+  wordInfo(["hanzi", "pinyin", "meaning", "sentence"]);
   setText($("prompt"), "👂 Listen and say it!");
   $("ready").hidden = false;
   sayWord();
@@ -382,8 +390,10 @@ function readBack(x, cheer) {
   const slots = [...$("slots").children];
   const light = k => () => { slots.forEach((sl, j) => sl.classList.toggle("reading", j === k)); $("slots").classList.remove("read-all"); };
   const all = () => { slots.forEach(sl => sl.classList.remove("reading")); $("slots").classList.add("read-all"); };
+  // Chinese: read characters one by one only when there are character tiles (Hard). Reading
+  // a lone 宝 then 宝 before 宝宝 in Easy mode sounded wrong, so Easy says just the word.
   const parts = x.zh
-    ? ([...x.zh].length > 1 ? [...x.zh].map((c, k) => [c, "zh", 0.7, light(k)]) : []).concat([[x.zh, "zh", 0.7, all], [x.en, "en", 0.85]])
+    ? ([...x.zh].length > 1 && slots.length ? [...x.zh].map((c, k) => [c, "zh", 0.7, light(k)]) : []).concat([[x.zh, "zh", 0.7, all], [x.en, "en", 0.85]])
     : [...x.w.toUpperCase()].map((l, k) => [letterName(l), "en", 0.8, light(k)]).concat([[x.w, "en", 0.75, all]]);
   if (cheer) parts.push([cheer, "en", 0.9]);
   say(parts);
@@ -433,7 +443,7 @@ function showDone() {
     if (isZh()) {
       b.innerHTML = `<span class="lp">${pic(x.pic)}</span><span class="hanzi" lang="zh-CN"></span><small></small>`;
       b.querySelector(".hanzi").textContent = x.zh; b.querySelector("small").textContent = x.py;
-      b.addEventListener("click", () => say([[x.zh, "zh"], [x.en, "en"]]));
+      b.addEventListener("click", () => say([[x.zh, "zh"], [x.en, "en"]].concat(x.s ? [[x.s, "zh"]] : [])));
     } else {
       b.innerHTML = `<span class="lp">${pic(x.pic)}</span><span></span>`;
       b.lastChild.textContent = x.w;
