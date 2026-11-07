@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spell With Me</title>
+<link rel="icon" href="daily-words/img/1f989.svg" type="image/svg+xml">
+<style>
+  body { font-family: "Comic Sans MS", "Chalkboard SE", system-ui, sans-serif; text-align: center;
+         background: #fff8e1; color: #4e342e; margin: 0; padding: 32px 16px; min-height: 100vh; box-sizing: border-box; }
+  h1 { font-size: clamp(32px, 7vw, 52px); margin: 0 0 24px; }
+  .games { display: grid; gap: 16px; max-width: 640px; margin: 0 auto; }
+  @media (min-width: 600px) { .games { grid-template-columns: 1fr 1fr; } }
+  a { display: block; text-decoration: none; color: inherit; background: #fff; border-radius: 24px;
+      padding: 24px 16px; box-shadow: 0 6px 0 #ffe0b2; }
+  a:active { transform: translateY(4px); box-shadow: 0 2px 0 #ffe0b2; }
+  .pic { font-size: 64px; line-height: 1; }
+  b { display: block; font-size: 26px; margin-top: 8px; }
+  small { font-size: 17px; color: #795548; }
+</style>
+</head>
+<body>
+  <h1>🦉 Spell With Me</h1>
+  <div class="games">
+    <a href="daily-words/"><div class="pic">📚</div><b>Daily Words</b><small>English and Chinese words, plus the ABC</small></a>
+    <a href="spell-with-me/"><div class="pic">🔤</div><b>Spell With Me</b><small>Tap the letters to spell the word</small></a>
+  </div>
+</body>
+</html>
