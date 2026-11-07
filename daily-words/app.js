@@ -52,19 +52,30 @@ function pickVoices() {
 }
 if ("speechSynthesis" in window) { pickVoices(); speechSynthesis.onvoiceschanged = pickVoices; }
 
-// parts: [[text, "en"|"zh", rate?], ...] spoken in order
+// parts: [[text, "en"|"zh", rate?, onStart?], ...] spoken in order.
+// onStart runs as that part begins (used to light up letters as they are read).
+let sayTimers = [];
 function say(parts) {
-  if (!("speechSynthesis" in window)) return;
-  speechSynthesis.cancel();
-  for (const [text, lang = "en", rate] of parts) {
+  sayTimers.forEach(clearTimeout); sayTimers = [];
+  const speech = "speechSynthesis" in window;
+  if (speech) speechSynthesis.cancel();
+  parts.forEach(([text, lang = "en", rate, onStart], k) => {
+    if (!speech) { if (onStart) sayTimers.push(setTimeout(onStart, k * 700)); return; }
     const u = new SpeechSynthesisUtterance(text);
     u.lang = lang === "zh" ? "zh-CN" : "en-US";
     if (voices[lang]) u.voice = voices[lang];
     u.rate = rate || (lang === "zh" ? 0.7 : 0.8);
     u.pitch = 1.05;
+    if (onStart) u.onstart = onStart;
     speechSynthesis.speak(u);
-  }
+  });
 }
+
+// Letter names, so a lone "A" is read as the letter, not the word "a"
+const LETTER_NAMES = { A: "ay", B: "bee", C: "see", D: "dee", E: "ee", F: "ef", G: "jee", H: "aitch", I: "eye",
+  J: "jay", K: "kay", L: "el", M: "em", N: "en", O: "oh", P: "pee", Q: "cue", R: "ar", S: "ess", T: "tee",
+  U: "you", V: "vee", W: "double you", X: "ex", Y: "why", Z: "zee" };
+const letterName = l => LETTER_NAMES[l.toUpperCase()] || l;
 function updateVoiceNote() {
   const missing = !("speechSynthesis" in window)
     ? "This browser can't read words aloud. Try Chrome, Safari or Edge."
@@ -114,7 +125,7 @@ function dayLabel(dayObj) {
 let screen = "home";
 let laterTimer = null;   // delayed speech; cancelled when the screen changes
 function show(id) {
-  clearTimeout(laterTimer);
+  clearTimeout(laterTimer); sayTimers.forEach(clearTimeout);
   if (id !== screen && "speechSynthesis" in window) speechSynthesis.cancel();
   screen = id;
   document.querySelectorAll(".screen").forEach(s => s.classList.toggle("on", s.id === id));
@@ -211,7 +222,7 @@ function loadWord() {
   $("msg").textContent = "";
   $("next").style.visibility = "hidden";
   $("ready").hidden = true;
-  $("slots").innerHTML = ""; $("tiles").innerHTML = ""; $("prompt").textContent = "";
+  $("slots").innerHTML = ""; $("slots").classList.remove("read-all"); $("tiles").innerHTML = ""; $("prompt").textContent = "";
   if (isZh()) zhLearn(); else enSpell();
 }
 
@@ -232,6 +243,7 @@ function wordInfo(parts) {
 function sayWord() {
   const x = cur();
   bounce();
+  if (game.solved && game.phase !== "learn" && $("slots").children.length) return readBack(x);
   if (!isZh()) return say([[x.w], [x.s], [x.w]]);
   if (game.phase === "quiz") return say([["Find", "en"], [x.zh, "zh"]]);
   if (game.phase === "build") return say([[x.zh, "zh"], [x.en, "en"]]);
@@ -256,7 +268,7 @@ function enSpell() {
     const extra = [..."ABCDEFGHIJKLMNOPRSTUVWY"].filter(c => !word.includes(c));
     letters.push(extra[Math.floor(Math.random() * extra.length)]);
   }
-  makeTiles(letters, word, l => say([[l.toLowerCase(), "en", 1]]));
+  makeTiles(letters, word, l => say([[letterName(l), "en", 0.9]]));
   sayWord();
 }
 
@@ -286,7 +298,7 @@ function tapTile(l, btn, target, speakTile) {
     btn.classList.add("used");
     if (game.typed === target.length) solved();
   } else {
-    say(isZh() ? [["Oops! Try again."], [l, "zh"]] : [["Oops! Try again.", "en", 1]]);
+    say(isZh() ? [[l, "zh", 0.8], ["Try again.", "en", 1]] : [[letterName(l), "en", 0.9], ["Try again.", "en", 1]]);
     btn.classList.add("wrong");
     setTimeout(() => btn.classList.remove("wrong"), 400);
     if (++game.misses >= 2) {
@@ -364,6 +376,18 @@ function zhBuild() {
   sayWord();
 }
 
+// After a correct answer: read each letter (or character) while it lights up, then the whole word
+function readBack(x, cheer) {
+  const slots = [...$("slots").children];
+  const light = k => () => { slots.forEach((sl, j) => sl.classList.toggle("reading", j === k)); $("slots").classList.remove("read-all"); };
+  const all = () => { slots.forEach(sl => sl.classList.remove("reading")); $("slots").classList.add("read-all"); };
+  const parts = x.zh
+    ? ([...x.zh].length > 1 ? [...x.zh].map((c, k) => [c, "zh", 0.7, light(k)]) : []).concat([[x.zh, "zh", 0.7, all], [x.en, "en", 0.85]])
+    : [...x.w.toUpperCase()].map((l, k) => [letterName(l), "en", 0.8, light(k)]).concat([[x.w, "en", 0.75, all]]);
+  if (cheer) parts.push([cheer, "en", 0.9]);
+  say(parts);
+}
+
 function solved() {
   const x = cur();
   game.solved = true;
@@ -383,9 +407,8 @@ function solved() {
   }
   saveProgress();
   renderTop();
-  // Words carry their own language (x.zh or x.w), so a later language switch can't mix them up
-  const praise = x.zh ? [[cheer, "en"], [x.zh, "zh"], [x.en, "en"]] : [[cheer + " " + x.w.split("").join(", ") + ". " + x.w + "!"]];
-  laterTimer = setTimeout(() => say(praise), 400);
+  game.cheer = cheer;
+  laterTimer = setTimeout(() => readBack(x, cheer), 350);
   $("next").style.visibility = "visible";
   $("next").focus({ preventScroll: true });
 }
@@ -444,7 +467,8 @@ function renderAbc() {
   });
 }
 function letterSpeech(a) {
-  return [[a.L], ["Big " + a.L + ", small " + a.L.toLowerCase() + "."], [a.end ? a.L + " is in " + a.w + "." : a.L + " is for " + a.w + "."]];
+  const n = letterName(a.L);
+  return [[n], ["Big " + n + ", small " + n + "."], [a.end ? n + " is in " + a.w + "." : n + " is for " + a.w + "."]];
 }
 function openLetter(k) {
   letterIndex = (k + 26) % 26;
@@ -495,7 +519,7 @@ function letterRound() {
   });
   sayLetterPrompt();
 }
-function sayLetterPrompt() { say([["Find " + (lg.big ? "big " : "small ") + lg.L + "."]]); }
+function sayLetterPrompt() { say([["Find " + (lg.big ? "big " : "small ") + letterName(lg.L) + "."]]); }
 function pickLetter(o, b) {
   if (lg.solved) return;
   if (o === lg.target) {
@@ -503,12 +527,12 @@ function pickLetter(o, b) {
     if (lg.misses === 0) lg.right++;
     progress.stars++; saveProgress(); setText($("game-stars"), "⭐ " + progress.stars);
     setText($("game-msg"), "🎉 Yes! ⭐");
-    say([["Yes! " + (lg.big ? "Big " : "Small ") + lg.L + "!"]]);
+    say([["Yes! " + (lg.big ? "Big " : "Small ") + letterName(lg.L) + "!"]]);
     lg.round++;
     laterTimer = setTimeout(() => { if (screen === "abcgame") lg.round < ROUNDS ? letterRound() : endLetterGame(); }, 1300);
   } else {
-    const same = o.toUpperCase() === lg.L;
-    say([[same ? "That's " + (lg.big ? "small " : "big ") + lg.L + ". Find " + (lg.big ? "big " : "small ") + lg.L + "." : "Try again."]]);
+    const isBig = o === o.toUpperCase();
+    say([["That's " + (isBig ? "big " : "small ") + letterName(o) + ". Try again."]]);
     b.classList.add("wrong"); setTimeout(() => b.classList.remove("wrong"), 400);
     if (++lg.misses >= 2) [...$("choices").children].find(c => c.textContent === lg.target)?.classList.add("hint");
   }

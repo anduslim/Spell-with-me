@@ -128,6 +128,11 @@ p { font-size: clamp(18px, 3.4vw, 24px); margin: 0; }
 .slot small { font-size: clamp(13px, 3vw, 18px); color: var(--muted); font-family: "Andika", sans-serif; margin-top: 2px; }
 .slot.filled { color: var(--good); border-color: var(--good-soft); }
 .slot.filled .ch { animation: pop .25s; display: inline-block; }
+/* Read-back after a correct answer: each letter lights up as it is spoken, then the whole word */
+.slot { transition: transform .15s, color .15s, border-color .15s; }
+.slot.reading { transform: scale(1.18) translateY(-4px); color: var(--go); border-color: var(--go); }
+#slots.read-all .slot { color: var(--good); border-color: var(--good); animation: glow .7s; }
+@keyframes glow { 50% { transform: scale(1.1); } }
 
 #tiles { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--gap); min-height: calc(var(--tile-size) + 8px); max-width: 680px; }
 #tiles:empty { display: none; }
