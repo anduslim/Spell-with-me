@@ -71,8 +71,9 @@ function say(parts) {
   });
 }
 
-// Letter names, so a lone "A" is read as the letter, not the word "a"
-const LETTER_NAMES = { A: "ay", B: "bee", C: "see", D: "dee", E: "ee", F: "ef", G: "jee", H: "aitch", I: "eye",
+// Letter names, so a lone "A" is read as the letter, not the word "a".
+// Spelled so speech voices say them right: "ay" is often read as "eye", and "jee" is not a word.
+const LETTER_NAMES = { A: "eigh", B: "bee", C: "see", D: "dee", E: "ee", F: "ef", G: "gee", H: "aitch", I: "eye",
   J: "jay", K: "kay", L: "el", M: "em", N: "en", O: "oh", P: "pee", Q: "cue", R: "ar", S: "ess", T: "tee",
   U: "you", V: "vee", W: "double you", X: "ex", Y: "why", Z: "zee" };
 const letterName = l => LETTER_NAMES[l.toUpperCase()] || l;
