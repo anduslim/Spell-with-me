@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spell With Me</title>
+<style>
+  body { font-family: Arial, sans-serif; text-align: center; background: #fff8e1; margin: 0; padding: 20px; }
+  #pic { font-size: 120px; }
+  #word { font-size: 60px; letter-spacing: 10px; color: #bbb; margin: 10px; }
+  #answer { font-size: 70px; letter-spacing: 10px; min-height: 90px; color: #2e7d32; }
+  .tile { font-size: 50px; width: 90px; height: 90px; margin: 8px; border: none; border-radius: 20px;
+          background: #42a5f5; color: white; cursor: pointer; }
+  .tile:active { transform: scale(0.9); }
+  #msg { font-size: 40px; height: 50px; }
+  #next { font-size: 30px; padding: 10px 30px; border-radius: 15px; border: none; background: #ff7043; color: white; }
+</style>
+</head>
+<body>
+  <div id="pic"></div>
+  <div id="word"></div>
+  <div id="answer"></div>
+  <div id="tiles"></div>
+  <div id="msg"></div>
+  <button id="next" onclick="nextWord()">Next ➜</button>
+
+<script>
+  const words = [
+    { w: "yes",  pic: "👍" },
+    { w: "no",   pic: "🙅" },
+    { w: "go",   pic: "🟢" },
+    { w: "stop", pic: "🛑" },
+    { w: "and",  pic: "➕" },
+    { w: "on",   pic: "💡" }
+  ];
+  let i = 0, typed = "";
+
+  function say(text) {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 0.8;
+    speechSynthesis.speak(u);
+  }
+
+  function load() {
+    const cur = words[i];
+    typed = "";
+    document.getElementById("pic").textContent = cur.pic;
+    document.getElementById("word").textContent = cur.w.toUpperCase();
+    document.getElementById("answer").textContent = "";
+    document.getElementById("msg").textContent = "";
+    const letters = cur.w.toUpperCase().split("").sort(() => Math.random() - 0.5);
+    const box = document.getElementById("tiles");
+    box.innerHTML = "";
+    letters.forEach(l => {
+      const b = document.createElement("button");
+      b.className = "tile";
+      b.textContent = l;
+      b.onclick = () => tap(l, b);
+      box.appendChild(b);
+    });
+    say(cur.w);
+  }
+
+  function tap(letter, btn) {
+    const target = words[i].w.toUpperCase();
+    say(letter);
+    if (letter === target[typed.length]) {
+      typed += letter;
+      btn.style.visibility = "hidden";
+      document.getElementById("answer").textContent = typed;
+      if (typed === target) {
+        document.getElementById("msg").textContent = "🎉 Great job! 🎉";
+        setTimeout(() => say("Great job! " + words[i].w), 500);
+      }
+    } else {
+      btn.style.background = "#ef5350";
+      setTimeout(() => btn.style.background = "#42a5f5", 400);
+    }
+  }
+
+  function nextWord() { i = (i + 1) % words.length; load(); }
+  document.getElementById("pic").onclick = () => say(words[i].w);
+  load();
+</script>
+</body>
+</html>
