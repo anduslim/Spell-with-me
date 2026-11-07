@@ -42,6 +42,9 @@
     <button class="menu-card" id="m-abc">
       <span class="m-pic">🔤</span><b>ABC</b><small>Aa Bb Cc with pictures</small>
     </button>
+    <button class="menu-card" id="m-exam">
+      <span class="m-pic">📝</span><b>Test</b><small id="exam-best">No hints · check what you know</small>
+    </button>
   </div>
   <p class="credit">Pictures: <a href="https://github.com/jdecked/twemoji" target="_blank" rel="noopener">Twemoji</a>, CC-BY 4.0</p>
 </main>
@@ -95,6 +98,43 @@
   </div>
 </main>
 
+<!-- ============ Test (no hints) ============ -->
+<main id="exam" class="screen">
+  <header class="topbar">
+    <button class="round home-btn" aria-label="Home">🏠</button>
+    <div id="exam-dots" aria-hidden="true"></div>
+    <span class="pill" id="exam-stars">⭐ 0</span>
+  </header>
+  <div class="note voice-note" hidden></div>
+  <div class="stage" id="exam-stage">
+    <section class="picture">
+      <button id="exam-pic" class="pic-card" aria-label="Hear the question again"></button>
+      <div id="exam-word" class="word-info"></div>
+    </section>
+    <section class="spell">
+      <div id="exam-prompt" class="prompt"></div>
+      <div class="slots-row">
+        <div id="exam-slots" aria-hidden="true"></div>
+        <button class="round" id="exam-undo" aria-label="Take back the last one" hidden>⌫</button>
+      </div>
+      <div id="exam-tiles"></div>
+      <div id="exam-msg" class="msg" aria-live="polite"></div>
+      <button id="exam-check" class="big alt" hidden>Check ✓</button>
+      <button id="exam-next" class="big" hidden>Next ➜</button>
+    </section>
+  </div>
+  <div id="exam-results" class="results" hidden>
+    <h1 id="exam-score"></h1>
+    <p id="exam-verdict"></p>
+    <p id="exam-missed-title" class="caption">Words to practise · tap to hear:</p>
+    <div id="exam-missed"></div>
+    <div class="buttons">
+      <button class="big" id="exam-again">🔁 Try again</button>
+      <button class="big home home-btn">🏠 Home</button>
+    </div>
+  </div>
+</main>
+
 <!-- ============ Alphabet ============ -->
 <main id="abc" class="screen">
   <header class="topbar">
@@ -102,7 +142,10 @@
     <h2>ABC</h2>
     <span class="spacer"></span>
   </header>
-  <button class="big alt" id="abc-game-btn">🎮 Letter game</button>
+  <div class="buttons">
+    <button class="big alt" id="abc-game-btn">🎮 Letter game</button>
+    <button class="big" id="abc-test-btn">📝 Letter test</button>
+  </div>
   <div id="abc-grid" class="abc-grid"></div>
 </main>
 

@@ -54,11 +54,16 @@ if ("speechSynthesis" in window) { pickVoices(); speechSynthesis.onvoiceschanged
 
 // parts: [[text, "en"|"zh", rate?, onStart?], ...] spoken in order.
 // onStart runs as that part begins (used to light up letters as they are read).
+// onDone runs once, when the last part has finished; not if newer speech replaced this one.
 let sayTimers = [];
-function say(parts) {
+let sayId = 0;
+function say(parts, onDone) {
   sayTimers.forEach(clearTimeout); sayTimers = [];
+  const id = ++sayId;
   const speech = "speechSynthesis" in window;
   if (speech) speechSynthesis.cancel();
+  const finish = () => { if (id === sayId && onDone) { const f = onDone; onDone = null; f(); } };
+  let last = null;
   parts.forEach(([text, lang = "en", rate, onStart], k) => {
     if (!speech) { if (onStart) sayTimers.push(setTimeout(onStart, k * 700)); return; }
     const u = new SpeechSynthesisUtterance(text);
@@ -68,7 +73,14 @@ function say(parts) {
     u.pitch = 1.05;
     if (onStart) u.onstart = onStart;
     speechSynthesis.speak(u);
+    last = u;
   });
+  if (!onDone) return;
+  if (!last) { sayTimers.push(setTimeout(finish, parts.length * 700)); return; }
+  last.onend = finish; last.onerror = finish;
+  // Safety net: some browsers never fire onend, so finish after a generous estimate anyway
+  const estimate = parts.reduce((t, [text, lang]) => t + 900 + text.length * (lang === "zh" ? 500 : 120), 1500);
+  sayTimers.push(setTimeout(finish, Math.min(estimate, 25000)));
 }
 
 // Letter names, so a lone "A" is read as the letter, not the word "a".
@@ -130,7 +142,7 @@ function show(id) {
   if (id !== screen && "speechSynthesis" in window) speechSynthesis.cancel();
   screen = id;
   document.querySelectorAll(".screen").forEach(s => s.classList.toggle("on", s.id === id));
-  document.documentElement.lang = (id === "play" || id === "done") && settings.lang === "zh" ? "zh-CN" : "en";
+  document.documentElement.lang = (id === "play" || id === "done" || id === "exam") && settings.lang === "zh" ? "zh-CN" : "en";
   window.scrollTo(0, 0);
   updateVoiceNote();
 }
@@ -153,6 +165,8 @@ function renderHome() {
   const t = day(0);
   const done = store.get(completeKey(t), false);
   setText($("today-preview"), done ? "Done today ✅" : lessonWords(t).map(x => x.pic).join(""));
+  const best = store.get(examKey(), null);
+  setText($("exam-best"), best ? `No hints · best ${best.right} / ${best.n}` : "No hints · check what you know");
 }
 document.querySelectorAll("[data-lang]").forEach(b => b.addEventListener("click", () => {
   settings.lang = b.dataset.lang; store.set("dw2-settings", settings); renderHome(); updateVoiceNote();
@@ -164,7 +178,7 @@ document.querySelectorAll("[data-level]").forEach(b => b.addEventListener("click
 }));
 $("m-today").addEventListener("click", () => { say([["Let's learn some words!"]]); startLesson(day(0)); });
 $("m-review").addEventListener("click", () => { renderDays(); show("days"); });
-$("m-abc").addEventListener("click", () => { renderAbc(); show("abc"); say([["A B C"]]); });
+$("m-abc").addEventListener("click", () => { renderAbc(); renderAbcTestBest(); show("abc"); say([["A B C"]]); });
 
 // ---------- Review past days ----------
 function renderDays() {
@@ -255,8 +269,9 @@ function sayWord() {
   if (!isZh()) return say([[x.w], [x.s], [x.w]]);
   if (game.phase === "quiz") return say([["Find", "en"], [x.zh, "zh"]]);
   if (game.phase === "build") return say([[x.zh, "zh"], [x.en, "en"]]);
-  // Learn: the word, its meaning, an example sentence, then the word again (like English mode)
-  say([[x.zh, "zh"], [x.en, "en"]].concat(x.s ? [[x.s, "zh"]] : [], [[x.zh, "zh"]]));
+  // Learn: the word, its meaning, an example sentence, then the word again (like English mode).
+  // "I'm ready" unlocks only once all of it has been heard.
+  say([[x.zh, "zh"], [x.en, "en"]].concat(x.s ? [[x.s, "zh"]] : [], [[x.zh, "zh"]]), () => setReady(true));
 }
 
 // English: spell with letter tiles
@@ -325,8 +340,15 @@ function zhLearn() {
   showPicture(x.pic);
   wordInfo(["hanzi", "pinyin", "meaning", "sentence"]);
   setText($("prompt"), "👂 Listen and say it!");
+  setReady(false);
   $("ready").hidden = false;
   sayWord();
+}
+function setReady(on) {
+  const r = $("ready");
+  r.disabled = !on;
+  setText(r, on ? "I'm ready ➜" : "🔊 Listen…");
+  if (on && game.phase === "learn") r.focus({ preventScroll: true });
 }
 $("ready").addEventListener("click", () => {
   $("ready").hidden = true;
@@ -463,6 +485,231 @@ function bonusWord() {
 }
 $("bonus").addEventListener("click", bonusWord);
 
+// ---------- Test: check what was learned, with no hints ----------
+// One try per question. Nothing is highlighted or read out while answering;
+// after each answer the right one is shown. Each mode has two question types:
+const EXAM_LEN = 10;
+const EXAM_TYPES = {
+  "en-easy": ["read", "spell"],   // read the word → find its picture; hear it → spell it (no guide letters)
+  "en-hard": ["read", "spell"],   // same, with 4 pictures and 2 extra letters
+  "zh-easy": ["listen", "read"],  // hear it → find its picture; read the characters (no pinyin) → find its picture
+  "zh-hard": ["listen", "build"]  // hear it → find its picture; hear it → build it (no guide characters or pinyin)
+};
+let ex = null;
+const examKey = () => `dw2-exam-best-${settings.lang}-${settings.level}`;
+const isHard = () => settings.level === "hard";
+
+// Words learned in the last REVIEW_DAYS days; topped up with today's words so a test is always possible
+function learnedWords() {
+  const ids = new Set();
+  for (let k = 0; k < REVIEW_DAYS; k++) {
+    const d = day(k);
+    if (store.get(completeKey(d), false)) lessonWords(d).forEach(x => ids.add(idOf(x)));
+    store.get(runKey(d), []).forEach(id => ids.add(id));
+  }
+  const pool = DATA[settings.lang][settings.level].filter(x => ids.has(idOf(x)));
+  for (const x of lessonWords(day(0))) if (pool.length < PER_DAY && !pool.includes(x)) pool.push(x);
+  return pool;
+}
+
+function startExam() {
+  const words = randomShuffle(learnedWords()).slice(0, EXAM_LEN), types = EXAM_TYPES[settings.lang + "-" + settings.level];
+  let qs = words.map((x, k) => ({ x, type: types[k % 2] }));
+  // Few words learned: test each of them both ways
+  if (qs.length < EXAM_LEN) qs = qs.concat(words.map((x, k) => ({ x, type: types[(k + 1) % 2] }))).slice(0, EXAM_LEN);
+  ex = { qs: randomShuffle(qs), i: 0, results: [] };
+  show("exam");
+  examQuestion();
+}
+
+function renderExamTop() {
+  setText($("exam-stars"), "⭐ " + progress.stars);
+  const dots = $("exam-dots"); dots.innerHTML = "";
+  ex.qs.forEach((q, k) => {
+    const r = ex.results[k];
+    dots.appendChild(Object.assign(document.createElement("div"),
+      { className: "dot" + (r === true ? " done" : r === false ? " miss" : "") + (k === ex.i && r === undefined ? " now" : "") }));
+  });
+}
+
+function examQuestion() {
+  const q = ex.qs[ex.i], x = q.x;
+  ex.answered = false; ex.typed = []; ex.target = null;
+  $("exam-stage").hidden = false; $("exam-results").hidden = true;
+  renderExamTop();
+  ["exam-msg", "exam-slots", "exam-tiles", "exam-word"].forEach(id => { $(id).innerHTML = ""; });
+  $("exam-next").hidden = true; $("exam-check").hidden = true; $("exam-undo").hidden = true;
+  const P = $("exam-pic"), W = $("exam-word");
+  P.hidden = false;
+  if (q.type === "read") {
+    P.hidden = true;
+    const w = document.createElement("span");
+    if (isZh()) { w.className = "hanzi read-word"; w.lang = "zh-CN"; w.textContent = x.zh; }
+    else { w.className = "read-word"; w.textContent = x.w; }
+    W.appendChild(w);
+    $("exam-prompt").textContent = "Read it. Which picture is it?";
+    examChoices(x);
+  } else if (q.type === "listen") {
+    P.innerHTML = pic("🔊");
+    $("exam-prompt").textContent = "Listen. Which picture is it?";
+    examChoices(x);
+  } else if (q.type === "spell") {
+    P.innerHTML = pic(x.pic);
+    $("exam-prompt").textContent = "Spell the word!";
+    const word = [...x.w.toUpperCase()];
+    const extra = randomShuffle([..."ABCDEFGHIJKLMNOPRSTUVWY"].filter(c => !word.includes(c))).slice(0, isHard() ? 2 : 0);
+    examTiles(word.concat(extra), word);
+  } else {   // build
+    P.innerHTML = pic("🔊");
+    W.insertAdjacentHTML("beforeend", `<span class="meaning"></span>`);
+    W.lastChild.textContent = "“" + x.en + "”";
+    $("exam-prompt").textContent = "Build it with the characters!";
+    const chars = [...x.zh];
+    const others = randomShuffle([...new Set(DATA.zh.easy.concat(DATA.zh.hard).flatMap(y => [...y.zh]))].filter(c => !chars.includes(c)));
+    examTiles(chars.concat(others.slice(0, 2)), chars);
+  }
+  examSay();
+}
+
+// The question, read aloud. "Read" questions only give the instruction: the word itself would be a hint.
+function examSay() {
+  const q = ex.qs[ex.i], x = q.x;
+  if (ex.answered) return say(examAnswerSpeech(x));
+  const P = $("exam-pic"); P.classList.remove("bounce"); void P.offsetWidth; P.classList.add("bounce");
+  if (q.type === "read") return say([[isZh() ? "Read it. Which picture is it?" : "Read the word. Which picture is it?"]]);
+  if (q.type === "listen") return say([["Find", "en"], [x.zh, "zh"]]);
+  if (q.type === "spell") return say([["Spell"], [x.w]]);
+  say([["Build", "en"], [x.zh, "zh"]]);
+}
+const examAnswerSpeech = x => isZh() ? [[x.zh, "zh"], [x.en, "en"]] : [[x.w]];
+
+function examChoices(x) {
+  const n = isHard() ? 4 : 3;
+  const pool = randomShuffle(DATA[settings.lang][settings.level].filter(y => y.pic !== x.pic));
+  const options = [x];
+  for (const y of pool) { if (options.length === n) break; if (!options.some(o => o.pic === y.pic)) options.push(y); }
+  randomShuffle(options).forEach((o, k) => {
+    const b = document.createElement("button");
+    b.className = "choice"; b.innerHTML = pic(o.pic); b.dataset.key = k + 1;
+    if (o === x) b.dataset.answer = "1";
+    b.setAttribute("aria-label", "Picture " + (k + 1));
+    b.addEventListener("click", () => { if (!ex.answered) { b.classList.add(o === x ? "right" : "wrong-final"); examAnswer(o === x); } });
+    $("exam-tiles").appendChild(b);
+  });
+}
+
+// Blank slots and tiles. Tiles are silent, placed letters stay neutral until "Check", and ⌫ takes one back.
+function examTiles(items, target) {
+  ex.target = target;
+  target.forEach(() => {
+    const s = document.createElement("div");
+    s.className = "slot" + (isZh() ? " zh" : ""); if (isZh()) s.lang = "zh-CN";
+    s.innerHTML = `<span class="ch"></span>`;
+    $("exam-slots").appendChild(s);
+  });
+  let order = randomShuffle(items);
+  for (let k = 0; k < 20 && order.slice(0, target.length).join("") === target.join(""); k++) order = randomShuffle(items);
+  order.forEach(l => {
+    const b = document.createElement("button");
+    b.className = "tile" + (isZh() ? " zh" : ""); b.textContent = l;
+    if (isZh()) b.lang = "zh-CN";
+    b.setAttribute("aria-label", (isZh() ? "Character " : "Letter ") + l);
+    b.addEventListener("click", () => examTap(b));
+    $("exam-tiles").appendChild(b);
+  });
+  $("exam-undo").hidden = false;
+}
+function examTap(b) {
+  if (ex.answered || b.classList.contains("used") || ex.typed.length >= ex.target.length) return;
+  const slot = $("exam-slots").children[ex.typed.length];
+  slot.querySelector(".ch").textContent = b.textContent; slot.classList.add("placed");
+  ex.typed.push(b); b.classList.add("used");
+  const full = ex.typed.length === ex.target.length;
+  $("exam-check").hidden = !full;
+  if (full) $("exam-check").focus({ preventScroll: true });
+}
+function examUndo() {
+  if (ex.answered || !ex.typed.length) return;
+  ex.typed.pop().classList.remove("used");
+  const slot = $("exam-slots").children[ex.typed.length];
+  slot.querySelector(".ch").textContent = ""; slot.classList.remove("placed");
+  $("exam-check").hidden = true;
+}
+function examCheck() {
+  if (ex.answered || ex.typed.length !== ex.target.length) return;
+  const got = ex.typed.map(b => b.textContent);
+  [...$("exam-slots").children].forEach((s, k) => s.classList.add(got[k] === ex.target[k] ? "good" : "bad"));
+  examAnswer(got.join("") === ex.target.join(""));
+}
+
+function examAnswer(ok) {
+  const q = ex.qs[ex.i], x = q.x;
+  ex.answered = true;
+  ex.results[ex.i] = ok;
+  if (ok) { progress.stars++; saveProgress(); }
+  document.querySelectorAll("#exam-tiles button").forEach(b => { b.disabled = true; });
+  if (!ok) $("exam-tiles").querySelector('[data-answer="1"]')?.classList.add("right");
+  $("exam-check").hidden = true; $("exam-undo").hidden = true;
+  // Show the answer: picture and word
+  const P = $("exam-pic"), W = $("exam-word");
+  P.hidden = false; P.innerHTML = pic(x.pic);
+  W.innerHTML = "";
+  if (isZh()) {
+    W.insertAdjacentHTML("beforeend", `<span class="hanzi" lang="zh-CN"></span><span class="pinyin"></span><span class="meaning"></span>`);
+    W.querySelector(".hanzi").textContent = x.zh; W.querySelector(".pinyin").textContent = x.py;
+    W.querySelector(".meaning").textContent = "“" + x.en + "”";
+  } else {
+    W.appendChild(Object.assign(document.createElement("span"), { className: "answer-word", textContent: x.w }));
+  }
+  setText($("exam-msg"), ok ? "✅ Right! ⭐" : "❌ Not quite");
+  say([[ok ? "Right!" : "It's", "en"]].concat(examAnswerSpeech(x)));
+  renderExamTop();
+  $("exam-next").hidden = false;
+  setText($("exam-next"), ex.i + 1 < ex.qs.length ? "Next ➜" : "🏆 Results");
+  $("exam-next").focus({ preventScroll: true });
+}
+
+function examNext() {
+  if (!ex.answered) return;
+  if (++ex.i < ex.qs.length) examQuestion(); else examResults();
+}
+
+function examResults() {
+  const n = ex.qs.length, right = ex.results.filter(Boolean).length;
+  const best = store.get(examKey(), null);
+  if (!best || right / n > best.right / best.n) store.set(examKey(), { right, n });
+  $("exam-stage").hidden = true; $("exam-results").hidden = false;
+  renderExamTop();
+  setText($("exam-score"), `🏆 ${right} / ${n}`);
+  const verdict = right === n ? "Perfect! You know all of them!" : right >= n * 0.7 ? "Great work!" : "Good try! Practise these and try again.";
+  $("exam-verdict").textContent = verdict;
+  const missed = [...new Set(ex.qs.filter((q, k) => !ex.results[k]).map(q => q.x))];
+  $("exam-missed-title").hidden = !missed.length;
+  const box = $("exam-missed"); box.innerHTML = "";
+  missed.forEach(x => {
+    const b = document.createElement("button");
+    b.className = "learned";
+    if (isZh()) {
+      b.innerHTML = `<span class="lp">${pic(x.pic)}</span><span class="hanzi" lang="zh-CN"></span><small></small>`;
+      b.querySelector(".hanzi").textContent = x.zh; b.querySelector("small").textContent = x.py;
+      b.addEventListener("click", () => say([[x.zh, "zh"], [x.en, "en"]].concat(x.s ? [[x.s, "zh"]] : [])));
+    } else {
+      b.innerHTML = `<span class="lp">${pic(x.pic)}</span><span></span>`;
+      b.lastChild.textContent = x.w;
+      b.addEventListener("click", () => say([[x.w], [x.s]]));
+    }
+    box.appendChild(b);
+  });
+  say([["You got " + right + " out of " + n + ". " + verdict]]);
+}
+
+$("m-exam").addEventListener("click", startExam);
+$("exam-pic").addEventListener("click", examSay);
+$("exam-undo").addEventListener("click", examUndo);
+$("exam-check").addEventListener("click", examCheck);
+$("exam-next").addEventListener("click", examNext);
+$("exam-again").addEventListener("click", startExam);
+
 // ---------- Alphabet ----------
 let letterIndex = 0;
 function renderAbc() {
@@ -500,10 +747,14 @@ $("prev").addEventListener("click", () => openLetter(letterIndex - 1));
 $("nextL").addEventListener("click", () => openLetter(letterIndex + 1));
 $("letter-back").addEventListener("click", () => show("abc"));
 
-// Letter game: "Find big G" / "Find small g", 4 choices, 10 rounds
+// Letter game: "Find big G" / "Find small g", 4 choices, 10 rounds.
+// Letter test: the same, but the letter is only heard (not shown), one try each, no hints.
 const ROUNDS = 10;
 let lg = null;
-function startLetterGame() { lg = { round: 0, right: 0 }; show("abcgame"); $("game-end").hidden = true; letterRound(); }
+function startLetterGame(test = false) {
+  lg = { round: 0, right: 0, test, results: [] };
+  show("abcgame"); $("game-end").hidden = true; letterRound();
+}
 function letterRound() {
   const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const L = letters[Math.floor(Math.random() * 26)], big = Math.random() < 0.5;
@@ -514,10 +765,9 @@ function letterRound() {
   lg.target = target; lg.big = big; lg.L = L; lg.misses = 0; lg.solved = false;
   const p = $("game-prompt");
   p.innerHTML = ""; p.append("🔊 Find " + (big ? "big " : "small "));
-  p.appendChild(Object.assign(document.createElement("span"), { className: big ? "cap" : "low", textContent: target }));
+  p.appendChild(Object.assign(document.createElement("span"), { className: big ? "cap" : "low", textContent: lg.test ? "?" : target }));
   emojify(p);
-  const dots = $("game-dots"); dots.innerHTML = "";
-  for (let k = 0; k < ROUNDS; k++) dots.appendChild(Object.assign(document.createElement("div"), { className: "dot" + (k < lg.round ? " done" : "") + (k === lg.round ? " now" : "") }));
+  renderLetterDots();
   setText($("game-stars"), "⭐ " + progress.stars);
   $("game-msg").textContent = "";
   const box = $("choices"); box.innerHTML = "";
@@ -530,9 +780,18 @@ function letterRound() {
   });
   sayLetterPrompt();
 }
+function renderLetterDots() {
+  const dots = $("game-dots"); dots.innerHTML = "";
+  for (let k = 0; k < ROUNDS; k++) {
+    const r = lg.results[k], done = lg.test ? r === true : k < lg.round;
+    dots.appendChild(Object.assign(document.createElement("div"),
+      { className: "dot" + (done ? " done" : "") + (lg.test && r === false ? " miss" : "") + (k === lg.round ? " now" : "") }));
+  }
+}
 function sayLetterPrompt() { say([["Find " + (lg.big ? "big " : "small ") + letterName(lg.L) + "."]]); }
 function pickLetter(o, b) {
   if (lg.solved) return;
+  if (lg.test) return testPickLetter(o, b);
   if (o === lg.target) {
     lg.solved = true; b.classList.add("right");
     if (lg.misses === 0) lg.right++;
@@ -548,17 +807,46 @@ function pickLetter(o, b) {
     if (++lg.misses >= 2) [...$("choices").children].find(c => c.textContent === lg.target)?.classList.add("hint");
   }
 }
+function testPickLetter(o, b) {
+  const ok = o === lg.target;
+  lg.solved = true; lg.results[lg.round] = ok;
+  b.classList.add(ok ? "right" : "wrong-final");
+  if (!ok) [...$("choices").children].find(c => c.textContent === lg.target)?.classList.add("right");
+  document.querySelectorAll("#choices button").forEach(c => { c.disabled = true; });
+  const p = $("game-prompt").querySelector(".cap, .low"); if (p) p.textContent = lg.target;
+  const name = (lg.big ? "big " : "small ") + letterName(lg.L);
+  if (ok) { lg.right++; progress.stars++; saveProgress(); setText($("game-stars"), "⭐ " + progress.stars); }
+  setText($("game-msg"), ok ? "✅ Right! ⭐" : "❌ Not quite");
+  say([[ok ? "Right! That's " + name + "." : "This is " + name + "."]]);
+  lg.round++;
+  renderLetterDots();
+  laterTimer = setTimeout(() => { if (screen === "abcgame") lg.round < ROUNDS ? letterRound() : endLetterGame(); }, 2200);
+}
 function endLetterGame() {
   $("choices").innerHTML = "";
   $("game-prompt").textContent = "";
-  setText($("game-prompt"), `🏆 ${lg.right} / ${ROUNDS} first try!`);
-  setText($("game-msg"), "🎉 Great playing! 🎉");
+  if (lg.test) {
+    const best = store.get("dw2-exam-best-abc", null);
+    if (!best || lg.right > best.right) store.set("dw2-exam-best-abc", { right: lg.right, n: ROUNDS });
+    setText($("game-prompt"), `🏆 ${lg.right} / ${ROUNDS}`);
+    setText($("game-msg"), lg.right === ROUNDS ? "🎉 Perfect! 🎉" : lg.right >= 7 ? "🎉 Great work! 🎉" : "Good try! 💪");
+    say([["You got " + lg.right + " out of " + ROUNDS + "."]]);
+  } else {
+    setText($("game-prompt"), `🏆 ${lg.right} / ${ROUNDS} first try!`);
+    setText($("game-msg"), "🎉 Great playing! 🎉");
+    say([["Great playing! You found " + lg.right + " letters on the first try."]]);
+  }
   $("game-end").hidden = false;
-  say([["Great playing! You found " + lg.right + " letters on the first try."]]);
+  renderAbcTestBest();
 }
-$("game-prompt").addEventListener("click", () => { if (lg && lg.round < ROUNDS) sayLetterPrompt(); });
-$("abc-game-btn").addEventListener("click", startLetterGame);
-$("game-again").addEventListener("click", startLetterGame);
+function renderAbcTestBest() {
+  const best = store.get("dw2-exam-best-abc", null);
+  setText($("abc-test-btn"), "📝 Letter test" + (best ? ` · best ${best.right}/${best.n}` : ""));
+}
+$("game-prompt").addEventListener("click", () => { if (lg && lg.round < ROUNDS && !lg.solved) sayLetterPrompt(); });
+$("abc-game-btn").addEventListener("click", () => startLetterGame(false));
+$("abc-test-btn").addEventListener("click", () => startLetterGame(true));
+$("game-again").addEventListener("click", () => startLetterGame(lg.test));
 $("game-back").addEventListener("click", () => show("abc"));
 $("game-abc").addEventListener("click", () => show("abc"));
 
@@ -578,6 +866,18 @@ document.addEventListener("keydown", e => {
       if (free.length) free[0].click();
     }
     if (/^[1-9]$/.test(e.key)) document.querySelector(`#tiles .choice[data-key="${e.key}"]`)?.click();
+  } else if (screen === "exam" && ex) {
+    if (e.key === " ") { e.preventDefault(); return examSay(); }
+    if (e.key === "Enter") {
+      if (!$("exam-check").hidden) { e.preventDefault(); return examCheck(); }
+      if (!$("exam-next").hidden) { e.preventDefault(); return examNext(); }
+    }
+    if (e.key === "Backspace") { e.preventDefault(); return examUndo(); }
+    if (!isZh() && /^[a-z]$/i.test(e.key)) {
+      const L = e.key.toUpperCase();
+      [...document.querySelectorAll("#exam-tiles .tile:not(.used)")].find(t => t.textContent === L)?.click();
+    }
+    if (/^[1-9]$/.test(e.key)) document.querySelector(`#exam-tiles .choice[data-key="${e.key}"]`)?.click();
   } else if (screen === "letter") {
     if (e.key === "ArrowLeft") openLetter(letterIndex - 1);
     else if (e.key === "ArrowRight") openLetter(letterIndex + 1);
