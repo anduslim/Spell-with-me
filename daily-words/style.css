@@ -279,3 +279,9 @@ button:disabled { cursor: default; }
 @media (orientation: landscape) and (max-height: 500px) {
   .menu { grid-template-columns: repeat(4, 1fr); }
 }
+
+/* ---------- ABC auto-play ---------- */
+.letter-tools { display: flex; align-items: center; gap: 8px; }
+#auto-btn.on { background: #e8f5e9; box-shadow: 0 4px 0 var(--good-soft); }
+.letter-card.slide { animation: slide-in .45s ease-out; }
+@keyframes slide-in { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }

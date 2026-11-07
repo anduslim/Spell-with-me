@@ -10,7 +10,7 @@ const store = {
   get(k, fallback) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 };
-let settings = Object.assign({ lang: "en", level: "easy" }, store.get("dw2-settings", {}));
+let settings = Object.assign({ lang: "en", level: "easy", autoAbc: true }, store.get("dw2-settings", {}));
 let progress = Object.assign({ stars: 0, streak: 0, lastDay: null }, store.get("dw2-progress", {}));
 const saveProgress = () => store.set("dw2-progress", progress);
 
@@ -728,7 +728,31 @@ function letterSpeech(a) {
   const n = letterName(a.L);
   return [[n], ["Big " + n + ", small " + n + "."], [a.end ? n + " is in " + a.w + "." : n + " is for " + a.w + "."]];
 }
+// Auto-play: after a letter has been read out, move on to the next one by itself (stops after Z)
+const AUTO_PAUSE = 1500;
+function scheduleAutoNext() {
+  clearTimeout(laterTimer);
+  if (!settings.autoAbc || screen !== "letter") return;
+  if (letterIndex === 25) return setAuto(false);
+  laterTimer = setTimeout(() => { if (settings.autoAbc && screen === "letter") openLetter(letterIndex + 1); }, AUTO_PAUSE);
+}
+function setAuto(on) {
+  settings.autoAbc = on; store.set("dw2-settings", settings);
+  const b = $("auto-btn");
+  b.setAttribute("aria-pressed", on);
+  b.setAttribute("aria-label", on ? "Pause auto-play" : "Play letters automatically");
+  setText(b, on ? "⏸️" : "▶️");
+  b.classList.toggle("on", on);
+}
+$("auto-btn").addEventListener("click", () => {
+  const on = !settings.autoAbc;
+  // Turning it on at Z starts again from A
+  if (on && letterIndex === 25) { setAuto(true); return openLetter(0); }
+  setAuto(on);
+  if (on) scheduleAutoNext(); else clearTimeout(laterTimer);
+});
 function openLetter(k) {
+  clearTimeout(laterTimer);
   letterIndex = (k + 26) % 26;
   const a = DATA.abc[letterIndex];
   $("cap").textContent = a.L; $("low").textContent = a.L.toLowerCase();
@@ -738,11 +762,11 @@ function openLetter(k) {
   $("letter-word").innerHTML = "";
   $("letter-word").append(w.slice(0, at), Object.assign(document.createElement("mark"), { textContent: w[at] }), w.slice(at + 1));
   $("letter-count").textContent = `${letterIndex + 1} / 26`;
-  if (screen !== "letter") show("letter");
-  const card = $("letter-card"); card.classList.remove("bounce"); void card.offsetWidth;
-  say(letterSpeech(a));
+  if (screen !== "letter") { show("letter"); setAuto(settings.autoAbc); }
+  const card = $("letter-card"); card.classList.remove("slide"); void card.offsetWidth; card.classList.add("slide");
+  say(letterSpeech(a), scheduleAutoNext);
 }
-$("letter-card").addEventListener("click", () => say(letterSpeech(DATA.abc[letterIndex])));
+$("letter-card").addEventListener("click", () => { clearTimeout(laterTimer); say(letterSpeech(DATA.abc[letterIndex]), scheduleAutoNext); });
 $("prev").addEventListener("click", () => openLetter(letterIndex - 1));
 $("nextL").addEventListener("click", () => openLetter(letterIndex + 1));
 $("letter-back").addEventListener("click", () => show("abc"));
@@ -882,6 +906,7 @@ document.addEventListener("keydown", e => {
     if (e.key === "ArrowLeft") openLetter(letterIndex - 1);
     else if (e.key === "ArrowRight") openLetter(letterIndex + 1);
     else if (e.key === " ") { e.preventDefault(); $("letter-card").click(); }
+    else if (e.key === "Enter") { e.preventDefault(); $("auto-btn").click(); }
     else if (/^[a-z]$/i.test(e.key)) openLetter(e.key.toUpperCase().charCodeAt(0) - 65);
   } else if (screen === "abcgame") {
     if (/^[1-4]$/.test(e.key)) document.querySelector(`#choices .choice[data-key="${e.key}"]`)?.click();
