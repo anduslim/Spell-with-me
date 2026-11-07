@@ -112,7 +112,10 @@ function dayLabel(dayObj) {
 
 // ---------- Screens ----------
 let screen = "home";
+let laterTimer = null;   // delayed speech; cancelled when the screen changes
 function show(id) {
+  clearTimeout(laterTimer);
+  if (id !== screen && "speechSynthesis" in window) speechSynthesis.cancel();
   screen = id;
   document.querySelectorAll(".screen").forEach(s => s.classList.toggle("on", s.id === id));
   document.documentElement.lang = (id === "play" || id === "done") && settings.lang === "zh" ? "zh-CN" : "en";
@@ -380,10 +383,9 @@ function solved() {
   }
   saveProgress();
   renderTop();
-  setTimeout(() => {
-    if (isZh()) say([[cheer, "en"], [x.zh, "zh"], [x.en, "en"]]);
-    else say([[cheer + " " + x.w.split("").join(", ") + ". " + x.w + "!"]]);
-  }, 400);
+  // Words carry their own language (x.zh or x.w), so a later language switch can't mix them up
+  const praise = x.zh ? [[cheer, "en"], [x.zh, "zh"], [x.en, "en"]] : [[cheer + " " + x.w.split("").join(", ") + ". " + x.w + "!"]];
+  laterTimer = setTimeout(() => say(praise), 400);
   $("next").style.visibility = "visible";
   $("next").focus({ preventScroll: true });
 }
@@ -503,7 +505,7 @@ function pickLetter(o, b) {
     setText($("game-msg"), "🎉 Yes! ⭐");
     say([["Yes! " + (lg.big ? "Big " : "Small ") + lg.L + "!"]]);
     lg.round++;
-    setTimeout(() => lg.round < ROUNDS ? letterRound() : endLetterGame(), 1300);
+    laterTimer = setTimeout(() => { if (screen === "abcgame") lg.round < ROUNDS ? letterRound() : endLetterGame(); }, 1300);
   } else {
     const same = o.toUpperCase() === lg.L;
     say([[same ? "That's " + (lg.big ? "small " : "big ") + lg.L + ". Find " + (lg.big ? "big " : "small ") + lg.L + "." : "Try again."]]);
